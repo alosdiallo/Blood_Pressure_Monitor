@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blood Pressure Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/pouchdb@7.3.1/dist/pouchdb.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root[data-theme='light'] {
+      --bg: #f7f9fb;
+      --text: #333;
+      --card: #fff;
+      --accent: #3498db;
+      --accent-hover: #2980b9;
+      --border: #ccc;
+    }
+    :root[data-theme='dark'] {
+      --bg: #1e1e1e;
+      --text: #f0f0f0;
+      --card: #2c2c2c;
+      --accent: #3498db;
+      --accent-hover: #5dade2;
+      --border: #555;
+    }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+    }
+    .controls {
+      flex: 1 1 320px;
+      max-width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .chart-section {
+      flex: 2 1 600px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    form {
+      background-color: var(--card);
+      padding: 15px 20px;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    }
+    label {
+      display: block;
+      margin: 8px 0 4px;
+      font-size: 14px;
+    }
+    input, button, textarea {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 14px;
+      background-color: var(--bg);
+      color: var(--text);
+    }
+    button {
+      background-color: var(--accent);
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: var(--accent-hover);
+    }
+    canvas {
+      margin-top: 10px;
+      max-width: 100%;
+    }
+    table {
+      margin-top: 20px;
+      border-collapse: collapse;
+      width: 100%;
+      max-width: 800px;
+      background: var(--card);
+      color: var(--text);
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      text-align: center;
+    }
+    #theme-toggle {
+      display: block;
+      margin: auto;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+<h1>Blood Pressure Tracker</h1>
+<div class="container">
+  <div class="controls">
+    <form id="bp-form">
+      <input type="hidden" id="editing-id">
+      <label>Date:</label><input type="date" id="date" required>
+      <label>Systolic:</label><input type="number" id="systolic" required>
+      <label>Diastolic:</label><input type="number" id="diastolic" required>
+      <label>Notes:</label><textarea id="notes"></textarea>
+      <button type="submit" id="submit-btn">Add Reading</button>
+      <button type="button" id="update-btn" style="display:none; background: green;">Update Reading</button>
+    </form>
+    <button id="theme-toggle">Toggle Light/Dark Mode</button>
+  </div>
+  <div class="chart-section">
+    <canvas id="bpChart" width="600" height="300"></canvas>
+    <table id="bp-table">
+      <thead><tr><th>Date</th><th>Systolic</th><th>Diastolic</th><th>Notes</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const db = new PouchDB('bp_readings');
+const bpTableBody = document.querySelector('#bp-table tbody');
+let chartData = [];
+let chart;
+
+async function loadChartData() {
+  const result = await db.allDocs({ include_docs: true });
+  chartData = result.rows.map(row => row.doc).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const labels = chartData.map(doc => doc.date);
+  const systolic = chartData.map(doc => doc.systolic);
+  const diastolic = chartData.map(doc => doc.diastolic);
+
+  const systolicLower = labels.map(() => 90);
+  const systolicUpper = labels.map(() => 120);
+  const diastolicLower = labels.map(() => 60);
+  const diastolicUpper = labels.map(() => 80);
+
+  if (chart) chart.destroy();
+  chart = new Chart(document.getElementById('bpChart').getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        // Systolic range shading
+        { label: 'Systolic Lower', data: systolicLower, borderColor: 'rgba(255,0,0,0)', backgroundColor: 'rgba(255,0,0,0.1)', fill: '+1', pointRadius: 0, order: 1 },
+        { label: 'Systolic Upper', data: systolicUpper, borderColor: 'rgba(255,0,0,0)', backgroundColor: 'rgba(255,0,0,0.1)', fill: false, pointRadius: 0, order: 1 },
+        // Diastolic range shading
+        { label: 'Diastolic Lower', data: diastolicLower, borderColor: 'rgba(0,0,255,0)', backgroundColor: 'rgba(0,0,255,0.1)', fill: '+1', pointRadius: 0, order: 1 },
+        { label: 'Diastolic Upper', data: diastolicUpper, borderColor: 'rgba(0,0,255,0)', backgroundColor: 'rgba(0,0,255,0.1)', fill: false, pointRadius: 0, order: 1 },
+        // Actual data
+        { label: 'Systolic', data: systolic, borderColor: 'red', backgroundColor: 'red', fill: false, order: 2 },
+        { label: 'Diastolic', data: diastolic, borderColor: 'blue', backgroundColor: 'blue', fill: false, order: 2 }
+      ]
+    },
+    options: {
+      onClick: (e, elements) => {
+        if (elements.length > 0) {
+          const index = elements[0].index;
+          const doc = chartData[index];
+          document.getElementById('date').value = doc.date;
+          document.getElementById('systolic').value = doc.systolic;
+          document.getElementById('diastolic').value = doc.diastolic;
+          document.getElementById('notes').value = doc.notes || '';
+          document.getElementById('editing-id').value = doc._id;
+          document.getElementById('submit-btn').style.display = 'none';
+          document.getElementById('update-btn').style.display = 'inline-block';
+        }
+      },
+      plugins: {
+        legend: {
+          labels: {
+            filter: item => ['Systolic', 'Diastolic'].includes(item.text)
+          }
+        }
+      },
+      responsive: true,
+      scales: {
+        x: { title: { display: true, text: 'Date' } },
+        y: { title: { display: true, text: 'Blood Pressure (mmHg)' } }
+      }
+    }
+  });
+
+  bpTableBody.innerHTML = '';
+  chartData.forEach(doc => {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${doc.date}</td>
+                     <td>${doc.systolic}</td>
+                     <td>${doc.diastolic}</td>
+                     <td>${doc.notes || ''}</td>
+                     <td>
+                       <button onclick="editEntry('${doc._id}')">Edit</button>
+                       <button onclick="deleteEntry('${doc._id}')">Delete</button>
+                     </td>`;
+    bpTableBody.appendChild(row);
+  });
+}
+
+async function editEntry(id) {
+  const doc = await db.get(id);
+  document.getElementById('date').value = doc.date;
+  document.getElementById('systolic').value = doc.systolic;
+  document.getElementById('diastolic').value = doc.diastolic;
+  document.getElementById('notes').value = doc.notes || '';
+  document.getElementById('editing-id').value = doc._id;
+  document.getElementById('submit-btn').style.display = 'none';
+  document.getElementById('update-btn').style.display = 'inline-block';
+}
+
+async function deleteEntry(id) {
+  const doc = await db.get(id);
+  if (confirm('Are you sure you want to delete this reading?')) {
+    await db.remove(doc);
+    loadChartData();
+  }
+}
+
+document.getElementById('bp-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const id = document.getElementById('editing-id').value;
+  const date = document.getElementById('date').value;
+  const systolic = parseInt(document.getElementById('systolic').value);
+  const diastolic = parseInt(document.getElementById('diastolic').value);
+  const notes = document.getElementById('notes').value;
+
+  if (!date || isNaN(systolic) || isNaN(diastolic)) return alert('Please fill all fields.');
+
+  if (id) {
+    const existing = await db.get(id);
+    await db.put({ ...existing, date, systolic, diastolic, notes });
+  } else {
+    await db.put({ _id: new Date().toISOString(), date, systolic, diastolic, notes });
+  }
+
+  e.target.reset();
+  document.getElementById('editing-id').value = '';
+  document.getElementById('submit-btn').style.display = 'inline-block';
+  document.getElementById('update-btn').style.display = 'none';
+  loadChartData();
+});
+
+document.getElementById('update-btn').addEventListener('click', async () => {
+  document.getElementById('bp-form').dispatchEvent(new Event('submit'));
+});
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  const newTheme = current === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+});
+
+loadChartData();
+</script>
+</body>
+</html>
