@@ -6,6 +6,8 @@
   <title>Blood Pressure Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/pouchdb@7.3.1/dist/pouchdb.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     :root[data-theme='light'] {
       --bg: #f7f9fb;
@@ -45,7 +47,7 @@
       max-width: 400px;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 10px;
     }
     .chart-section {
       flex: 2 1 600px;
@@ -105,7 +107,7 @@
     #theme-toggle {
       display: block;
       margin: auto;
-      margin-bottom: 20px;
+      margin-bottom: 10px;
     }
   </style>
 </head>
@@ -122,6 +124,9 @@
       <button type="submit" id="submit-btn">Add Reading</button>
       <button type="button" id="update-btn" style="display:none; background: green;">Update Reading</button>
     </form>
+    <button id="export-img-btn">Export Chart as Image</button>
+    <button id="export-csv-btn">Export Data as CSV</button>
+    <button id="export-pdf-btn">Export Report as PDF</button>
     <button id="theme-toggle">Toggle Light/Dark Mode</button>
   </div>
   <div class="chart-section">
@@ -156,15 +161,12 @@ async function loadChartData() {
     data: {
       labels,
       datasets: [
-        // Systolic range shading
-        { label: 'Systolic Lower', data: systolicLower, borderColor: 'rgba(255,0,0,0)', backgroundColor: 'rgba(255,0,0,0.1)', fill: '+1', pointRadius: 0, order: 1 },
-        { label: 'Systolic Upper', data: systolicUpper, borderColor: 'rgba(255,0,0,0)', backgroundColor: 'rgba(255,0,0,0.1)', fill: false, pointRadius: 0, order: 1 },
-        // Diastolic range shading
-        { label: 'Diastolic Lower', data: diastolicLower, borderColor: 'rgba(0,0,255,0)', backgroundColor: 'rgba(0,0,255,0.1)', fill: '+1', pointRadius: 0, order: 1 },
-        { label: 'Diastolic Upper', data: diastolicUpper, borderColor: 'rgba(0,0,255,0)', backgroundColor: 'rgba(0,0,255,0.1)', fill: false, pointRadius: 0, order: 1 },
-        // Actual data
-        { label: 'Systolic', data: systolic, borderColor: 'red', backgroundColor: 'red', fill: false, order: 2 },
-        { label: 'Diastolic', data: diastolic, borderColor: 'blue', backgroundColor: 'blue', fill: false, order: 2 }
+        { label: 'Systolic Lower', data: systolicLower, borderColor: 'rgba(255,0,0,0)', backgroundColor: 'rgba(255,0,0,0.1)', fill: '+1', pointRadius: 0 },
+        { label: 'Systolic Upper', data: systolicUpper, borderColor: 'rgba(255,0,0,0)', backgroundColor: 'rgba(255,0,0,0.1)', fill: false, pointRadius: 0 },
+        { label: 'Diastolic Lower', data: diastolicLower, borderColor: 'rgba(0,0,255,0)', backgroundColor: 'rgba(0,0,255,0.1)', fill: '+1', pointRadius: 0 },
+        { label: 'Diastolic Upper', data: diastolicUpper, borderColor: 'rgba(0,0,255,0)', backgroundColor: 'rgba(0,0,255,0.1)', fill: false, pointRadius: 0 },
+        { label: 'Systolic', data: systolic, borderColor: 'red', backgroundColor: 'red', fill: false },
+        { label: 'Diastolic', data: diastolic, borderColor: 'blue', backgroundColor: 'blue', fill: false }
       ]
     },
     options: {
@@ -256,6 +258,51 @@ document.getElementById('bp-form').addEventListener('submit', async e => {
 
 document.getElementById('update-btn').addEventListener('click', async () => {
   document.getElementById('bp-form').dispatchEvent(new Event('submit'));
+});
+
+document.getElementById('export-img-btn').addEventListener('click', () => {
+  const link = document.createElement('a');
+  link.download = 'blood_pressure_chart.png';
+  link.href = document.getElementById('bpChart').toDataURL('image/png');
+  link.click();
+});
+
+document.getElementById('export-csv-btn').addEventListener('click', async () => {
+  const result = await db.allDocs({ include_docs: true });
+  let csv = 'Date,Systolic,Diastolic,Notes\n';
+  result.rows.map(r => r.doc).forEach(doc => {
+    csv += `${doc.date},${doc.systolic},${doc.diastolic},${doc.notes || ''}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'blood_pressure_data.csv';
+  link.click();
+});
+
+document.getElementById('export-pdf-btn').addEventListener('click', async () => {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(18);
+  doc.text('Blood Pressure Report', 14, 20);
+  doc.setFontSize(12);
+  doc.text(`Date Generated: ${new Date().toLocaleString()}`, 14, 30);
+  const chartCanvas = document.getElementById('bpChart');
+  await html2canvas(chartCanvas).then(canvas => {
+    const imgData = canvas.toDataURL('image/png');
+    doc.addImage(imgData, 'PNG', 10, 40, 180, 80);
+  });
+  let y = 130;
+  doc.setFontSize(14);
+  doc.text('Blood Pressure Table', 14, y);
+  y += 6;
+  doc.setFontSize(10);
+  const result = await db.allDocs({ include_docs: true });
+  const data = result.rows.map(r => r.doc);
+  data.forEach((d, i) => {
+    doc.text(`${d.date} | ${d.systolic}/${d.diastolic} | ${d.notes || ''}`, 14, y + (i + 1) * 6);
+  });
+  doc.save('blood_pressure_report.pdf');
 });
 
 document.getElementById('theme-toggle').addEventListener('click', () => {
